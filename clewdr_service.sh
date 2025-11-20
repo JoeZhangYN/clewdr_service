@@ -1,6 +1,6 @@
 #!/bin/bash
 # ClewdR & SillyTavern 完整管理工具
-# 使用: curl -O -C - https://raw.githubusercontent.com/JoeZhangYN/clewdr_service/main/clewdr_service.sh && chmod +x clewdr_service.sh && ./clewdr_service.sh
+# 使用: chmod +x clewdr_manager.sh && bash ./clewdr_manager.sh
 
 # ========== 配置 ==========
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -9,13 +9,13 @@ ST_DIR="$SCRIPT_DIR/SillyTavern"
 CONFIG="$CLEWDR_DIR/clewdr.toml"
 
 # ========== 颜色 ==========
-C_RED='\033[0;31m'
-C_GREEN='\033[0;32m'
-C_YELLOW='\033[1;33m'
-C_BLUE='\033[0;34m'
-C_CYAN='\033[0;36m'
-C_WHITE='\033[1;37m'
-C_NC='\033[0m'
+C_RED='\e[31m'
+C_GREEN='\e[32m'
+C_YELLOW='\e[33m'
+C_BLUE='\e[34m'
+C_CYAN='\e[36m'
+C_WHITE='\e[97m'
+C_NC='\e[0m'
 
 # ========== 日志 ==========
 log() { echo -e "${2:-$C_BLUE}[$1]$C_NC ${@:3}" >&2; }
@@ -87,7 +87,7 @@ install_st() {
         git clone --depth 1 --branch release \
             "https://github.com/SillyTavern/SillyTavern" "$ST_DIR" || { error "克隆失败"; return 1; }
     fi
-    
+
     info "安装依赖..."
     (cd "$ST_DIR" && npm install --omit=dev --loglevel=error) || { error "依赖安装失败"; return 1; }
     
@@ -205,7 +205,6 @@ ${C_BLUE}[配置]${C_NC}
 ${C_RED} 0. 退出${C_NC}
 EOF
     echo -e "${C_CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${C_NC}"
-    curl -s https://raw.githubusercontent.com/rzline/st-cr-ins.sh/main/log.log 2>/dev/null
     echo
 }
 
