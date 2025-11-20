@@ -175,6 +175,28 @@ install_st() {
     return 0
 }
 
+# ========== 清理 NodeSource 仓库 ==========
+clean_nodesource_repo() {
+    info "清理 NodeSource 仓库缓存..."
+    
+    if [ -f /etc/yum.repos.d/nodesource-el7.repo ]; then
+        rm -f /etc/yum.repos.d/nodesource-el7.repo
+    fi
+    
+    if [ -f /etc/yum.repos.d/nodesource-el.repo ]; then
+        rm -f /etc/yum.repos.d/nodesource-el.repo
+    fi
+    
+    # 清理所有 nodesource 相关的 repo 文件
+    rm -f /etc/yum.repos.d/nodesource*.repo
+    
+    # 清理 yum 缓存
+    yum clean all &>/dev/null
+    rm -rf /var/cache/yum/x86_64/7/nodesource* &>/dev/null
+    
+    success "仓库清理完成"
+}
+
 # ========== 升级 Node.js ==========
 upgrade_nodejs() {
     info "开始升级 Node.js..."
@@ -311,7 +333,10 @@ upgrade_nodejs() {
                 info "移除旧版本..."
                 yum remove -y nodejs npm 2>/dev/null || true
                 
-                info "添加 NodeSource 仓库..."
+                # 彻底清理 NodeSource 仓库
+                clean_nodesource_repo
+                
+                info "添加 NodeSource 仓库 (Node.js $node_version)..."
                 if ! curl -fsSL https://rpm.nodesource.com/setup_${node_version}.x | bash -; then
                     error "添加仓库失败"
                     return 1
@@ -337,12 +362,14 @@ upgrade_nodejs() {
                                 1)
                                     info "尝试安装 Node.js 18..."
                                     yum remove -y nodejs npm 2>/dev/null || true
+                                    clean_nodesource_repo
                                     curl -fsSL https://rpm.nodesource.com/setup_18.x | bash -
                                     yum install -y nodejs
                                     ;;
                                 2)
                                     info "尝试安装 Node.js 16..."
                                     yum remove -y nodejs npm 2>/dev/null || true
+                                    clean_nodesource_repo
                                     curl -fsSL https://rpm.nodesource.com/setup_16.x | bash -
                                     yum install -y nodejs
                                     ;;
@@ -518,7 +545,10 @@ EOF
             
             if [ "$os_type" = "centos" ]; then
                 yum remove -y nodejs npm 2>/dev/null || true
+                clean_nodesource_repo
+                info "添加 NodeSource 仓库 (Node.js $recover_version)..."
                 curl -fsSL https://rpm.nodesource.com/setup_${recover_version}.x | bash -
+                info "安装 Node.js $recover_version..."
                 yum install -y nodejs
                 yum install -y gcc-c++ make 2>/dev/null || true
             else
