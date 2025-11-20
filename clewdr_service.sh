@@ -187,66 +187,138 @@ upgrade_nodejs() {
     
     # 检测系统
     local os_type=""
+    local os_version=""
     if [ -f /etc/redhat-release ]; then
         os_type="centos"
+        os_version=$(rpm -q --queryformat '%{VERSION}' centos-release 2>/dev/null || echo "unknown")
     elif [ -f /etc/debian_version ]; then
         os_type="debian"
+        os_version=$(cat /etc/debian_version)
     else
         error "不支持的系统类型"
         return 1
     fi
     
-    info "检测到系统: $os_type"
+    info "检测到系统: $os_type $os_version"
+    
+    # CentOS 7 兼容性检查
+    if [ "$os_type" = "centos" ] && [ "$os_version" = "7" ]; then
+        warn "检测到 CentOS 7 系统"
+        echo ""
+        echo "由于 glibc 版本限制 (2.17)，Node.js 22 无法在 CentOS 7 上运行"
+        echo "推荐方案："
+        echo "  - Node.js 18 LTS (支持到 2025-04)"
+        echo "  - Node.js 20 LTS (部分功能可能受限)"
+        echo ""
+    fi
+    
     echo ""
     
     # 选择版本
     echo "请选择要安装的 Node.js 版本:"
-    echo "1) Node.js 20 LTS (推荐)"
-    echo "2) Node.js 22 (最新)"
+    if [ "$os_type" = "centos" ] && [ "$os_version" = "7" ]; then
+        echo "1) Node.js 18 LTS (推荐 - CentOS 7 最佳选择)"
+        echo "2) Node.js 20 LTS"
+    else
+        echo "1) Node.js 20 LTS (推荐)"
+        echo "2) Node.js 22 (最新)"
+    fi
     echo "3) 使用 NVM 管理版本"
+    echo "4) 恢复/重装当前版本"
     echo "0) 返回主菜单"
     echo ""
-    read -p "请选择 [0-3]: " node_choice
+    read -p "请选择 [0-4]: " node_choice
     
     case $node_choice in
         1|2)
-            local node_version="20"
-            [[ "$node_choice" == "2" ]] && node_version="22"
+            # 确定版本号
+            local node_version=""
+            if [ "$os_type" = "centos" ] && [ "$os_version" = "7" ]; then
+                [[ "$node_choice" == "1" ]] && node_version="18" || node_version="20"
+            else
+                [[ "$node_choice" == "1" ]] && node_version="20" || node_version="22"
+            fi
             
             echo ""
             info "准备安装 Node.js $node_version..."
+            
+            # 备份当前版本信息
+            local old_node_version=$(node -v 2>/dev/null)
+            local old_npm_version=$(npm -v 2>/dev/null)
             
             if [ "$os_type" = "centos" ]; then
                 info "移除旧版本..."
                 yum remove -y nodejs npm 2>/dev/null || true
                 
                 info "添加 NodeSource 仓库..."
-                curl -fsSL https://rpm.nodesource.com/setup_${node_version}.x | bash -
+                if ! curl -fsSL https://rpm.nodesource.com/setup_${node_version}.x | bash -; then
+                    error "添加仓库失败"
+                    return 1
+                fi
                 
                 info "安装 Node.js..."
-                yum install -y nodejs
+                if ! yum install -y nodejs; then
+                    error "安装失败，可能是系统版本不兼容"
+                    echo ""
+                    echo "尝试安装备用版本..."
+                    
+                    # CentOS 7 降级到 Node.js 16
+                    if [ "$os_version" = "7" ]; then
+                        warn "尝试安装 Node.js 16 (CentOS 7 最后支持版本)"
+                        yum remove -y nodejs npm 2>/dev/null || true
+                        curl -fsSL https://rpm.nodesource.com/setup_16.x | bash -
+                        
+                        if yum install -y nodejs; then
+                            success "Node.js 16 安装成功"
+                        else
+                            error "安装失败，请尝试使用 NVM 方式"
+                            return 1
+                        fi
+                    else
+                        return 1
+                    fi
+                fi
                 
                 info "安装构建工具..."
-                yum install -y gcc-c++ make
+                yum install -y gcc-c++ make 2>/dev/null || true
+                
             else
                 info "移除旧版本..."
                 apt-get remove -y nodejs npm 2>/dev/null || true
                 apt-get autoremove -y
                 
                 info "添加 NodeSource 仓库..."
-                curl -fsSL https://deb.nodesource.com/setup_${node_version}.x | bash -
+                if ! curl -fsSL https://deb.nodesource.com/setup_${node_version}.x | bash -; then
+                    error "添加仓库失败"
+                    return 1
+                fi
                 
                 info "安装 Node.js..."
-                apt-get install -y nodejs
+                if ! apt-get install -y nodejs; then
+                    error "安装失败"
+                    return 1
+                fi
                 
                 info "安装构建工具..."
-                apt-get install -y build-essential
+                apt-get install -y build-essential 2>/dev/null || true
             fi
             
+            # 验证安装
             echo ""
+            local new_node_version=$(node -v 2>/dev/null)
+            local new_npm_version=$(npm -v 2>/dev/null)
+            
+            if [ -z "$new_node_version" ]; then
+                error "Node.js 安装验证失败"
+                echo ""
+                echo "旧版本: $old_node_version"
+                echo "请尝试选项 3 使用 NVM 方式安装"
+                return 1
+            fi
+            
             success "Node.js 升级完成"
-            echo "Node.js 版本: $(node -v)"
-            echo "npm 版本: $(npm -v)"
+            echo "旧版本: Node.js $old_node_version | npm $old_npm_version"
+            echo "新版本: Node.js $new_node_version | npm $new_npm_version"
             ;;
             
         3)
@@ -258,11 +330,10 @@ upgrade_nodejs() {
                 info "NVM 已安装"
             else
                 info "安装 NVM..."
-                curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
-                
-                # 加载 NVM
-                export NVM_DIR="$HOME/.nvm"
-                [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+                if ! curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash; then
+                    error "NVM 安装失败"
+                    return 1
+                fi
                 
                 success "NVM 安装完成"
             fi
@@ -273,15 +344,28 @@ upgrade_nodejs() {
             
             echo ""
             echo "选择要安装的版本:"
-            echo "1) Node.js 20 LTS"
-            echo "2) Node.js 22"
+            if [ "$os_type" = "centos" ] && [ "$os_version" = "7" ]; then
+                echo "1) Node.js 18 LTS (推荐)"
+                echo "2) Node.js 20 LTS"
+            else
+                echo "1) Node.js 20 LTS (推荐)"
+                echo "2) Node.js 22"
+            fi
             read -p "请选择 [1-2]: " nvm_choice
             
-            local nvm_version="20"
-            [[ "$nvm_choice" == "2" ]] && nvm_version="22"
+            local nvm_version=""
+            if [ "$os_type" = "centos" ] && [ "$os_version" = "7" ]; then
+                [[ "$nvm_choice" == "1" ]] && nvm_version="18" || nvm_version="20"
+            else
+                [[ "$nvm_choice" == "1" ]] && nvm_version="20" || nvm_version="22"
+            fi
             
             info "安装 Node.js $nvm_version..."
-            nvm install $nvm_version
+            if ! nvm install $nvm_version; then
+                error "安装失败"
+                return 1
+            fi
+            
             nvm use $nvm_version
             nvm alias default $nvm_version
             
@@ -303,6 +387,41 @@ EOF
             echo "npm 版本: $(npm -v)"
             echo ""
             echo "提示: 如果命令不生效，请运行: source ~/.bashrc"
+            ;;
+            
+        4)
+            echo ""
+            info "恢复/重装 Node.js..."
+            
+            # 询问版本
+            read -p "输入要安装的版本 (如 16, 18, 20): " recover_version
+            
+            if [[ ! "$recover_version" =~ ^[0-9]+$ ]]; then
+                error "无效版本号"
+                return 1
+            fi
+            
+            if [ "$os_type" = "centos" ]; then
+                yum remove -y nodejs npm 2>/dev/null || true
+                curl -fsSL https://rpm.nodesource.com/setup_${recover_version}.x | bash -
+                yum install -y nodejs
+                yum install -y gcc-c++ make 2>/dev/null || true
+            else
+                apt-get remove -y nodejs npm 2>/dev/null || true
+                apt-get autoremove -y
+                curl -fsSL https://deb.nodesource.com/setup_${recover_version}.x | bash -
+                apt-get install -y nodejs
+                apt-get install -y build-essential 2>/dev/null || true
+            fi
+            
+            if command -v node &>/dev/null; then
+                success "恢复完成"
+                echo "Node.js 版本: $(node -v)"
+                echo "npm 版本: $(npm -v)"
+            else
+                error "恢复失败"
+                return 1
+            fi
             ;;
             
         0)
