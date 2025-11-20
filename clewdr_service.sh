@@ -188,6 +188,8 @@ upgrade_nodejs() {
     # 检测系统
     local os_type=""
     local os_version=""
+    local glibc_version=""
+    
     if [ -f /etc/redhat-release ]; then
         os_type="centos"
         os_version=$(rpm -q --queryformat '%{VERSION}' centos-release 2>/dev/null || echo "unknown")
@@ -199,52 +201,111 @@ upgrade_nodejs() {
         return 1
     fi
     
-    info "检测到系统: $os_type $os_version"
+    # 获取 glibc 版本
+    glibc_version=$(ldd --version 2>/dev/null | head -n1 | grep -oP '\d+\.\d+' || echo "unknown")
     
-    # CentOS 7 兼容性检查
+    info "系统信息: $os_type $os_version"
+    info "glibc 版本: $glibc_version"
+    echo ""
+    
+    # 系统兼容性提示
+    echo "==========================================="
+    echo "       Node.js 版本兼容性说明"
+    echo "==========================================="
+    echo ""
+    
     if [ "$os_type" = "centos" ] && [ "$os_version" = "7" ]; then
-        warn "检测到 CentOS 7 系统"
+        echo "您的系统: CentOS 7 (glibc $glibc_version)"
         echo ""
-        echo "由于 glibc 版本限制 (2.17)，Node.js 22 无法在 CentOS 7 上运行"
-        echo "推荐方案："
-        echo "  - Node.js 18 LTS (支持到 2025-04)"
-        echo "  - Node.js 20 LTS (部分功能可能受限)"
+        echo "版本支持情况:"
+        echo "  Node.js 16  [推荐] 最后完全支持的版本"
+        echo "  Node.js 18  [可用] LTS 版本，稳定性好"
+        echo "  Node.js 20  [警告] 部分功能可能受限"
+        echo "  Node.js 22  [失败] 需要 glibc 2.28+，无法安装"
         echo ""
+        echo "说明: CentOS 7 的 glibc 版本为 2.17，过新的"
+        echo "      Node.js 版本会因系统库过旧而无法运行"
+    else
+        echo "您的系统: $os_type $os_version (glibc $glibc_version)"
+        echo ""
+        echo "版本支持情况:"
+        echo "  Node.js 16  [旧版] 仅用于兼容性需求"
+        echo "  Node.js 18  [稳定] LTS 版本"
+        echo "  Node.js 20  [推荐] LTS 版本，功能完整"
+        echo "  Node.js 22  [最新] 最新特性，推荐使用"
+        echo ""
+        echo "说明: 您的系统支持所有版本，推荐安装 20 或 22"
     fi
     
+    echo "==========================================="
     echo ""
     
     # 选择版本
     echo "请选择要安装的 Node.js 版本:"
+    
     if [ "$os_type" = "centos" ] && [ "$os_version" = "7" ]; then
-        echo "1) Node.js 18 LTS (推荐 - CentOS 7 最佳选择)"
-        echo "2) Node.js 20 LTS"
+        # CentOS 7 专用菜单
+        echo "1) Node.js 16 LTS (推荐 - 最稳定)"
+        echo "2) Node.js 18 LTS (次选 - 功能更多)"
+        echo "3) Node.js 20 LTS (需测试 - 可能有问题)"
+        echo "4) Node.js 22    (不推荐 - 大概率失败)"
+        echo ""
+        echo "5) 使用 NVM 管理版本 (推荐方式)"
+        echo "6) 恢复/重装指定版本"
+        echo "0) 返回主菜单"
     else
-        echo "1) Node.js 20 LTS (推荐)"
-        echo "2) Node.js 22 (最新)"
+        # 新系统菜单
+        echo "1) Node.js 16 LTS (旧版 - 仅兼容需求)"
+        echo "2) Node.js 18 LTS (稳定)"
+        echo "3) Node.js 20 LTS (推荐)"
+        echo "4) Node.js 22    (最新)"
+        echo ""
+        echo "5) 使用 NVM 管理版本"
+        echo "6) 恢复/重装指定版本"
+        echo "0) 返回主菜单"
     fi
-    echo "3) 使用 NVM 管理版本"
-    echo "4) 恢复/重装当前版本"
-    echo "0) 返回主菜单"
+    
     echo ""
-    read -p "请选择 [0-4]: " node_choice
+    read -p "请选择 [0-6]: " node_choice
     
     case $node_choice in
-        1|2)
-            # 确定版本号
+        1|2|3|4)
+            # 版本映射
             local node_version=""
+            case $node_choice in
+                1) node_version="16" ;;
+                2) node_version="18" ;;
+                3) node_version="20" ;;
+                4) node_version="22" ;;
+            esac
+            
+            # CentOS 7 额外警告
             if [ "$os_type" = "centos" ] && [ "$os_version" = "7" ]; then
-                [[ "$node_choice" == "1" ]] && node_version="18" || node_version="20"
-            else
-                [[ "$node_choice" == "1" ]] && node_version="20" || node_version="22"
+                if [ "$node_version" = "22" ]; then
+                    echo ""
+                    warn "警告: Node.js 22 在 CentOS 7 上无法运行！"
+                    read -p "您确定要继续吗? (输入 yes 继续): " confirm
+                    if [ "$confirm" != "yes" ]; then
+                        info "已取消安装"
+                        return 0
+                    fi
+                elif [ "$node_version" = "20" ]; then
+                    echo ""
+                    warn "警告: Node.js 20 在 CentOS 7 上可能不稳定"
+                    read -p "是否继续? (y/N): " confirm
+                    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+                        info "已取消安装"
+                        return 0
+                    fi
+                fi
             fi
             
             echo ""
             info "准备安装 Node.js $node_version..."
             
             # 备份当前版本信息
-            local old_node_version=$(node -v 2>/dev/null)
-            local old_npm_version=$(npm -v 2>/dev/null)
+            local old_node_version=$(node -v 2>/dev/null || echo "未安装")
+            local old_npm_version=$(npm -v 2>/dev/null || echo "未安装")
             
             if [ "$os_type" = "centos" ]; then
                 info "移除旧版本..."
@@ -256,23 +317,39 @@ upgrade_nodejs() {
                     return 1
                 fi
                 
-                info "安装 Node.js..."
+                info "安装 Node.js $node_version..."
                 if ! yum install -y nodejs; then
-                    error "安装失败，可能是系统版本不兼容"
+                    error "安装失败！"
                     echo ""
-                    echo "尝试安装备用版本..."
                     
-                    # CentOS 7 降级到 Node.js 16
+                    # 自动降级建议
                     if [ "$os_version" = "7" ]; then
-                        warn "尝试安装 Node.js 16 (CentOS 7 最后支持版本)"
-                        yum remove -y nodejs npm 2>/dev/null || true
-                        curl -fsSL https://rpm.nodesource.com/setup_16.x | bash -
-                        
-                        if yum install -y nodejs; then
-                            success "Node.js 16 安装成功"
-                        else
-                            error "安装失败，请尝试使用 NVM 方式"
-                            return 1
+                        if [ "$node_version" = "22" ] || [ "$node_version" = "20" ]; then
+                            warn "检测到 CentOS 7 系统"
+                            echo ""
+                            echo "自动降级选项:"
+                            echo "1) 安装 Node.js 18 LTS"
+                            echo "2) 安装 Node.js 16 LTS (最安全)"
+                            echo "0) 放弃安装"
+                            read -p "请选择 [0-2]: " fallback
+                            
+                            case $fallback in
+                                1)
+                                    info "尝试安装 Node.js 18..."
+                                    yum remove -y nodejs npm 2>/dev/null || true
+                                    curl -fsSL https://rpm.nodesource.com/setup_18.x | bash -
+                                    yum install -y nodejs
+                                    ;;
+                                2)
+                                    info "尝试安装 Node.js 16..."
+                                    yum remove -y nodejs npm 2>/dev/null || true
+                                    curl -fsSL https://rpm.nodesource.com/setup_16.x | bash -
+                                    yum install -y nodejs
+                                    ;;
+                                *)
+                                    return 1
+                                    ;;
+                            esac
                         fi
                     else
                         return 1
@@ -305,25 +382,40 @@ upgrade_nodejs() {
             
             # 验证安装
             echo ""
+            echo "==========================================="
             local new_node_version=$(node -v 2>/dev/null)
             local new_npm_version=$(npm -v 2>/dev/null)
             
             if [ -z "$new_node_version" ]; then
-                error "Node.js 安装验证失败"
+                error "Node.js 安装验证失败！"
                 echo ""
                 echo "旧版本: $old_node_version"
-                echo "请尝试选项 3 使用 NVM 方式安装"
+                echo ""
+                echo "建议操作:"
+                echo "  1. 选择选项 5 使用 NVM 方式安装"
+                echo "  2. 选择选项 6 手动恢复到旧版本"
+                if [ "$os_type" = "centos" ] && [ "$os_version" = "7" ]; then
+                    echo "  3. 安装 Node.js 16 (最安全)"
+                fi
                 return 1
             fi
             
-            success "Node.js 升级完成"
+            success "Node.js 安装完成！"
+            echo "==========================================="
             echo "旧版本: Node.js $old_node_version | npm $old_npm_version"
             echo "新版本: Node.js $new_node_version | npm $new_npm_version"
+            echo "==========================================="
             ;;
             
-        3)
+        5)
             echo ""
             info "使用 NVM 安装 Node.js..."
+            echo ""
+            echo "NVM 优势:"
+            echo "  - 可安装多个版本并随时切换"
+            echo "  - 不受系统库限制"
+            echo "  - 用户级安装，无需 root"
+            echo ""
             
             # 检查是否已安装 NVM
             if [ -d "$HOME/.nvm" ]; then
@@ -344,21 +436,20 @@ upgrade_nodejs() {
             
             echo ""
             echo "选择要安装的版本:"
-            if [ "$os_type" = "centos" ] && [ "$os_version" = "7" ]; then
-                echo "1) Node.js 18 LTS (推荐)"
-                echo "2) Node.js 20 LTS"
-            else
-                echo "1) Node.js 20 LTS (推荐)"
-                echo "2) Node.js 22"
-            fi
-            read -p "请选择 [1-2]: " nvm_choice
+            echo "1) Node.js 16 LTS"
+            echo "2) Node.js 18 LTS"
+            echo "3) Node.js 20 LTS"
+            echo "4) Node.js 22"
+            read -p "请选择 [1-4]: " nvm_choice
             
             local nvm_version=""
-            if [ "$os_type" = "centos" ] && [ "$os_version" = "7" ]; then
-                [[ "$nvm_choice" == "1" ]] && nvm_version="18" || nvm_version="20"
-            else
-                [[ "$nvm_choice" == "1" ]] && nvm_version="20" || nvm_version="22"
-            fi
+            case $nvm_choice in
+                1) nvm_version="16" ;;
+                2) nvm_version="18" ;;
+                3) nvm_version="20" ;;
+                4) nvm_version="22" ;;
+                *) error "无效选项"; return 1 ;;
+            esac
             
             info "安装 Node.js $nvm_version..."
             if ! nvm install $nvm_version; then
@@ -382,23 +473,47 @@ EOF
             fi
             
             echo ""
-            success "Node.js 安装完成"
+            success "Node.js 安装完成！"
             echo "Node.js 版本: $(node -v)"
             echo "npm 版本: $(npm -v)"
             echo ""
-            echo "提示: 如果命令不生效，请运行: source ~/.bashrc"
+            echo "==========================================="
+            echo "NVM 常用命令:"
+            echo "  nvm list           - 查看已安装版本"
+            echo "  nvm install 18     - 安装 Node.js 18"
+            echo "  nvm use 18         - 切换到 Node.js 18"
+            echo "  nvm alias default 18 - 设置默认版本"
+            echo "==========================================="
+            echo ""
+            echo "重要: 如果命令不生效，请运行: source ~/.bashrc"
             ;;
             
-        4)
+        6)
             echo ""
-            info "恢复/重装 Node.js..."
+            info "恢复/重装指定版本..."
+            echo ""
+            echo "可选版本: 16, 18, 20, 22"
             
-            # 询问版本
-            read -p "输入要安装的版本 (如 16, 18, 20): " recover_version
+            if [ "$os_type" = "centos" ] && [ "$os_version" = "7" ]; then
+                echo "您的系统 (CentOS 7) 推荐: 16 或 18"
+            fi
             
-            if [[ ! "$recover_version" =~ ^[0-9]+$ ]]; then
-                error "无效版本号"
+            echo ""
+            read -p "输入要安装的版本号: " recover_version
+            
+            if [[ ! "$recover_version" =~ ^(16|18|20|22)$ ]]; then
+                error "无效版本号，仅支持: 16, 18, 20, 22"
                 return 1
+            fi
+            
+            # CentOS 7 警告
+            if [ "$os_type" = "centos" ] && [ "$os_version" = "7" ] && [ "$recover_version" = "22" ]; then
+                warn "Node.js 22 无法在 CentOS 7 上运行！"
+                read -p "确定继续? (输入 yes): " confirm
+                if [ "$confirm" != "yes" ]; then
+                    info "已取消"
+                    return 0
+                fi
             fi
             
             if [ "$os_type" = "centos" ]; then
@@ -415,7 +530,7 @@ EOF
             fi
             
             if command -v node &>/dev/null; then
-                success "恢复完成"
+                success "恢复完成！"
                 echo "Node.js 版本: $(node -v)"
                 echo "npm 版本: $(npm -v)"
             else
