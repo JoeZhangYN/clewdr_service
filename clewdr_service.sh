@@ -175,6 +175,150 @@ install_st() {
     return 0
 }
 
+# ========== 升级 Node.js ==========
+upgrade_nodejs() {
+    info "开始升级 Node.js..."
+    echo ""
+    
+    # 显示当前版本
+    echo "当前 Node.js 版本: $(node -v 2>/dev/null || echo '未安装')"
+    echo "当前 npm 版本: $(npm -v 2>/dev/null || echo '未安装')"
+    echo ""
+    
+    # 检测系统
+    local os_type=""
+    if [ -f /etc/redhat-release ]; then
+        os_type="centos"
+    elif [ -f /etc/debian_version ]; then
+        os_type="debian"
+    else
+        error "不支持的系统类型"
+        return 1
+    fi
+    
+    info "检测到系统: $os_type"
+    echo ""
+    
+    # 选择版本
+    echo "请选择要安装的 Node.js 版本:"
+    echo "1) Node.js 20 LTS (推荐)"
+    echo "2) Node.js 22 (最新)"
+    echo "3) 使用 NVM 管理版本"
+    echo "0) 返回主菜单"
+    echo ""
+    read -p "请选择 [0-3]: " node_choice
+    
+    case $node_choice in
+        1|2)
+            local node_version="20"
+            [[ "$node_choice" == "2" ]] && node_version="22"
+            
+            echo ""
+            info "准备安装 Node.js $node_version..."
+            
+            if [ "$os_type" = "centos" ]; then
+                info "移除旧版本..."
+                yum remove -y nodejs npm 2>/dev/null || true
+                
+                info "添加 NodeSource 仓库..."
+                curl -fsSL https://rpm.nodesource.com/setup_${node_version}.x | bash -
+                
+                info "安装 Node.js..."
+                yum install -y nodejs
+                
+                info "安装构建工具..."
+                yum install -y gcc-c++ make
+            else
+                info "移除旧版本..."
+                apt-get remove -y nodejs npm 2>/dev/null || true
+                apt-get autoremove -y
+                
+                info "添加 NodeSource 仓库..."
+                curl -fsSL https://deb.nodesource.com/setup_${node_version}.x | bash -
+                
+                info "安装 Node.js..."
+                apt-get install -y nodejs
+                
+                info "安装构建工具..."
+                apt-get install -y build-essential
+            fi
+            
+            echo ""
+            success "Node.js 升级完成"
+            echo "Node.js 版本: $(node -v)"
+            echo "npm 版本: $(npm -v)"
+            ;;
+            
+        3)
+            echo ""
+            info "使用 NVM 安装 Node.js..."
+            
+            # 检查是否已安装 NVM
+            if [ -d "$HOME/.nvm" ]; then
+                info "NVM 已安装"
+            else
+                info "安装 NVM..."
+                curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
+                
+                # 加载 NVM
+                export NVM_DIR="$HOME/.nvm"
+                [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+                
+                success "NVM 安装完成"
+            fi
+            
+            # 加载 NVM
+            export NVM_DIR="$HOME/.nvm"
+            [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+            
+            echo ""
+            echo "选择要安装的版本:"
+            echo "1) Node.js 20 LTS"
+            echo "2) Node.js 22"
+            read -p "请选择 [1-2]: " nvm_choice
+            
+            local nvm_version="20"
+            [[ "$nvm_choice" == "2" ]] && nvm_version="22"
+            
+            info "安装 Node.js $nvm_version..."
+            nvm install $nvm_version
+            nvm use $nvm_version
+            nvm alias default $nvm_version
+            
+            # 添加到 bashrc
+            if ! grep -q "NVM_DIR" ~/.bashrc; then
+                cat >> ~/.bashrc <<'EOF'
+
+# NVM 配置
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+[ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"
+EOF
+                info "已添加到 ~/.bashrc"
+            fi
+            
+            echo ""
+            success "Node.js 安装完成"
+            echo "Node.js 版本: $(node -v)"
+            echo "npm 版本: $(npm -v)"
+            echo ""
+            echo "提示: 如果命令不生效，请运行: source ~/.bashrc"
+            ;;
+            
+        0)
+            info "返回主菜单"
+            return 0
+            ;;
+            
+        *)
+            error "无效选项"
+            return 1
+            ;;
+    esac
+    
+    return 0
+}
+
 # ========== 配置管理 ==========
 config_set() {
     if [[ ! -f "$CONFIG" ]]; then
@@ -401,29 +545,35 @@ show_menu() {
     echo "ClewdR: $cr_st"
     echo "SillyTavern: $st_st"
     echo "服务状态: $service_st"
+    
+    # 显示 Node.js 版本
+    local node_ver=$(node -v 2>/dev/null || echo "未安装")
+    local npm_ver=$(npm -v 2>/dev/null || echo "未安装")
+    echo "Node.js: $node_ver | npm: $npm_ver"
     echo ""
     
     echo "[安装管理]"
     echo "1) 安装/更新 ClewdR"
     echo "2) 安装/更新 SillyTavern"
+    echo "3) 升级 Node.js 版本"
     echo ""
     echo "[直接启动]"
-    echo "3) 启动 ClewdR (前台运行)"
-    echo "4) 启动 SillyTavern (前台运行)"
+    echo "4) 启动 ClewdR (前台运行)"
+    echo "5) 启动 SillyTavern (前台运行)"
     echo ""
     echo "[服务管理]"
-    echo "5) 安装服务"
-    echo "6) 启动服务"
-    echo "7) 停止服务"
-    echo "8) 重启服务"
-    echo "9) 查看服务状态"
-    echo "10) 启用开机自启"
-    echo "11) 禁用开机自启"
-    echo "12) 卸载服务"
+    echo "6) 安装服务"
+    echo "7) 启动服务"
+    echo "8) 停止服务"
+    echo "9) 重启服务"
+    echo "10) 查看服务状态"
+    echo "11) 启用开机自启"
+    echo "12) 禁用开机自启"
+    echo "13) 卸载服务"
     echo ""
     echo "[配置管理]"
-    echo "13) 开放公网访问"
-    echo "14) 设置端口号"
+    echo "14) 开放公网访问"
+    echo "15) 设置端口号"
     echo ""
     echo "0) 退出"
     echo "==========================================="
@@ -433,7 +583,7 @@ show_menu() {
 main_menu() {
     show_menu
     
-    read -rp "请选择操作 [0-14]: " choice
+    read -rp "请选择操作 [0-15]: " choice
     echo
     
     case $choice in
@@ -444,39 +594,42 @@ main_menu() {
             check_deps && install_st
             ;;
         3)
-            start_direct "ClewdR" "$CLEWDR_DIR" "./clewdr"
+            upgrade_nodejs
             ;;
         4)
-            start_direct "SillyTavern" "$ST_DIR" "node server.js"
+            start_direct "ClewdR" "$CLEWDR_DIR" "./clewdr"
             ;;
         5)
-            create_service
+            start_direct "SillyTavern" "$ST_DIR" "node server.js"
             ;;
         6)
-            start_service
+            create_service
             ;;
         7)
-            stop_service
+            start_service
             ;;
         8)
-            restart_service
+            stop_service
             ;;
         9)
-            status_service
+            restart_service
             ;;
         10)
-            enable_service
+            status_service
             ;;
         11)
-            disable_service
+            enable_service
             ;;
         12)
-            remove_service
+            disable_service
             ;;
         13)
-            config_set public
+            remove_service
             ;;
         14)
+            config_set public
+            ;;
+        15)
             config_set port
             ;;
         0)
